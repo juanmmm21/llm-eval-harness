@@ -170,3 +170,151 @@ class LLMEvaluator:
             
         return bp * geom_mean
 
+    @classmethod
+    def evaluate_sample(cls, candidate: str, reference: str) -> MetricReport:
+        """Calcula el reporte de métricas completo para un único par de textos."""
+        # Limpieza básica
+        cand_clean = candidate.strip()
+        ref_clean = reference.strip()
+        
+        # Exact match
+        exact = 1.0 if cand_clean == ref_clean else 0.0
+        
+        # Tokenizar
+        cand_tokens = cls.clean_and_tokenize(cand_clean)
+        ref_tokens = cls.clean_and_tokenize(ref_clean)
+        
+        # Calcular similitudes
+        jaccard = cls.compute_jaccard(cand_tokens, ref_tokens)
+        cosine = cls.compute_cosine_similarity(cand_tokens, ref_tokens)
+        bleu = cls.compute_bleu(cand_tokens, ref_tokens)
+        
+        # Coherencia de longitud
+        c_len = len(cand_tokens)
+        r_len = len(ref_tokens)
+        length_ratio = c_len / max(r_len, 1)
+        
+        return MetricReport(
+            exact_match=exact,
+            jaccard_similarity=jaccard,
+            cosine_similarity=cosine,
+            bleu_score=bleu,
+            length_ratio=length_ratio
+        )
+
+
+class EvalHarnessSuite:
+    """
+    Arnés de ejecución de pruebas y detección de regresiones de modelos.
+    """
+
+    def __init__(self, baseline_filepath: Optional[str] = None) -> None:
+        self.baseline_filepath = baseline_filepath
+        self.baseline_data: Optional[DatasetEvaluationSummary] = None
+        if baseline_filepath and os.path.exists(baseline_filepath):
+            self.load_baseline(baseline_filepath)
+
+    def load_baseline(self, filepath: str) -> None:
+        """Carga un reporte previo de evaluación como línea base para comparar regresiones."""
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            self.baseline_data = DatasetEvaluationSummary(**data)
+        logger.info(f"Línea base cargada desde '{filepath}'. Muestras: {self.baseline_data.total_samples}")
+
+    def save_as_baseline(self, summary: DatasetEvaluationSummary, filepath: str) -> None:
+        """Guarda la evaluación actual como un archivo de línea base de referencia."""
+        os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", exist_ok=True)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(summary.model_dump(), f, indent=2, ensure_ascii=False)
+        logger.info(f"Reporte de evaluación guardado como línea base en '{filepath}'")
+
+    def run_evaluation(self, samples: List[Dict[str, str]]) -> DatasetEvaluationSummary:
+        """
+        Ejecuta la evaluación sobre una colección de dicts con llaves 'candidate' y 'reference'.
+        """
+        total_exact = 0.0
+        total_jaccard = 0.0
+        total_cosine = 0.0
+        total_bleu = 0.0
+        total_len_ratio = 0.0
+        individual_results = []
+        
+        for idx, sample in enumerate(samples):
+            candidate = sample.get("candidate", "")
+            reference = sample.get("reference", "")
+            prompt = sample.get("prompt", "")
+            
+            report = LLMEvaluator.evaluate_sample(candidate, reference)
+            
+            total_exact += report.exact_match
+            total_jaccard += report.jaccard_similarity
+            total_cosine += report.cosine_similarity
+            total_bleu += report.bleu_score
+            total_len_ratio += report.length_ratio
+            
+            # Guardamos los metadatos individuales para auditoría
+            res = report.model_dump()
+            res["prompt"] = prompt
+            res["candidate"] = candidate
+            res["reference"] = reference
+            res["id"] = idx
+            individual_results.append(res)
+            
+        total_samples = len(samples) if samples else 1
+        summary = DatasetEvaluationSummary(
+            avg_exact_match=total_exact / total_samples,
+            avg_jaccard_similarity=total_jaccard / total_samples,
+            avg_cosine_similarity=total_cosine / total_samples,
+            avg_bleu_score=total_bleu / total_samples,
+            avg_length_ratio=total_len_ratio / total_samples,
+            total_samples=len(samples),
+            individual_results=individual_results
+        )
+        return summary
+
+    def check_for_regressions(self, current_summary: DatasetEvaluationSummary, tolerance: float = 0.05) -> Tuple[bool, List[str]]:
+        """
+        Compara las métricas actuales contra la línea base para reportar regresiones significativas.
+        
+        Args:
+            current_summary: El reporte actual a verificar.
+            tolerance: El porcentaje máximo admisible de disminución (por defecto 5%).
+            
+        Returns:
+            - regression_detected: Booleano que indica si existe una degradación.
+            - warnings: Lista de alertas detallando qué métricas sufrieron caídas.
+        """
+        if not self.baseline_data:
+            return False, ["No hay datos de línea base cargados para comparar regresiones."]
+            
+        warnings = []
+        regression_detected = False
+        
+        metrics_to_check = [
+            ("avg_bleu_score", "BLEU Score", current_summary.avg_bleu_score, self.baseline_data.avg_bleu_score),
+            ("avg_cosine_similarity", "Similitud Coseno", current_summary.avg_cosine_similarity, self.baseline_data.avg_cosine_similarity),
+            ("avg_jaccard_similarity", "Similitud Jaccard", current_summary.avg_jaccard_similarity, self.baseline_data.avg_jaccard_similarity),
+            ("avg_exact_match", "Exact Match", current_summary.avg_exact_match, self.baseline_data.avg_exact_match)
+        ]
+        
+        for key, name, current_val, baseline_val in metrics_to_check:
+            # Evitamos alertas si el baseline es cero
+            if baseline_val == 0.0:
+                continue
+                
+            # Calculamos la variación relativa
+            change = (current_val - baseline_val) / baseline_val
+            
+            # Si el valor disminuye más de la tolerancia configurada
+            if change < -tolerance:
+                warnings.append(
+                    f"REGRESION DETECTADA: La metrica '{name}' cayo un {abs(change)*100:.2f}% "
+                    f"(Línea base: {baseline_val:.4f} | Actual: {current_val:.4f})"
+                )
+                regression_detected = True
+            elif change < 0.0:
+                logger.info(
+                    f"Leve degradacion en '{name}': -{abs(change)*100:.2f}% (Dentro del margen de tolerancia)"
+                )
+                
+        return regression_detected, warnings
