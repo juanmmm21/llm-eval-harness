@@ -76,6 +76,54 @@ This component validates the results of:
 *   `test_eval.py`: Unit test suite that checks the accuracy of the Jaccard, cosine, and BLEU-4 formulas against edge cases and the correct interception of regression alarms.
 *   `example.py`: Interactive code that simulates the evaluation of a base model, the export of its JSON baseline, the subsequent evaluation of an experimentally degraded model, and the breakdown of alerts in the console.
 
+## Evaluating RAG on real datasets
+
+Since `0.1.0` the harness evaluates retrieval-augmented generation on public benchmarks, not only
+string similarity between two texts.
+
+**Loaders** (`llm_eval_harness.datasets`, standard library only; rows come from the Hugging Face
+rows API and are cached as JSONL):
+
+| Loader | Dataset | What it measures |
+| --- | --- | --- |
+| `load_hotpotqa(limit, offset)` | HotpotQA, *distractor* setting: each question with 10 Wikipedia paragraphs, 2 of them supporting | retrieval and answer |
+| `load_nq_open(limit, offset)` | Natural Questions open: real Google queries, short answers, no context | answer (with your own retrieval) |
+
+**Metrics** (`llm_eval_harness.rag_metrics`, `evaluate_rag(examples, predictions)`):
+
+| Metric | Definition |
+| --- | --- |
+| `exact_match`, `f1` | official SQuAD/HotpotQA normalization, max over valid answers |
+| `contains` | a valid answer appears (as whole words) inside the prediction |
+| `faithfulness` | share of the answer's content words found in the retrieved context (lexical; pass a `judge` for a semantic check) |
+| `context_recall` | share of the supporting paragraphs (by title) among the retrieved ones |
+| `context_precision` | share of the retrieved paragraphs that are supporting |
+
+`regressions(current, baseline, tolerance)` lists the metrics that dropped; it is the CI gate.
+
+**Reference baselines**, measured with `python -m llm_eval_harness.cli baseline` (no model, no
+other component; Python 3.13, x86_64 container, 4 vCPU):
+
+| HotpotQA dev, distractor | n | EM | F1 | contains | faithfulness | context recall | context precision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| oracle context + best-overlap sentence | 500 | 0.002 | 0.084 | 0.322 | 1.000 | 1.000 | 1.000 |
+| lexical TF-IDF top-2 + best-overlap sentence | 500 | 0.002 | 0.059 | 0.214 | 1.000 | 0.636 | 0.636 |
+| lexical TF-IDF top-2 + best-overlap sentence (CI subset) | 50 | 0.000 | 0.040 | 0.180 | 1.000 | 0.660 | 0.660 |
+
+The "answer" of these baselines is a whole sentence, so EM is ~0 by construction: they bound
+retrieval, not generation. End-to-end numbers of the full AI Core pipeline (hybrid retrieval,
+reranker, LLM) are in the [ai-core-infra-hub](https://github.com/juanmmm21/ai-core-infra-hub)
+README, measured with these same metrics.
+
+**CI**: `data/` holds a fixed 50-question HotpotQA subset and a 50-question NQ-open subset
+(licenses in `data/README.md`); the workflow fails if the baseline metrics drop below
+`data/baseline_hotpotqa_50.json`.
+
+```bash
+python -m llm_eval_harness.cli fetch hotpotqa --limit 500 --out hotpotqa_dev_500.jsonl
+python -m llm_eval_harness.cli baseline hotpotqa_dev_500.jsonl
+```
+
 ## Using it as a package
 
 Since `0.1.0` the code lives in the `llm_eval_harness` package and the repository is

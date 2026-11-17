@@ -18,3 +18,5 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: pytest -q
+      - name: RAG metrics regression gate (HotpotQA subset)
+        run: python -m llm_eval_harness.cli baseline data/hotpotqa_distractor_dev_50.jsonl --gate data/baseline_hotpotqa_50.json
