@@ -6,8 +6,6 @@ import logging
 from typing import Dict, List, Any, Tuple, Optional
 from pydantic import BaseModel, Field
 
-# Configuración del log para auditoría en MLOps
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
