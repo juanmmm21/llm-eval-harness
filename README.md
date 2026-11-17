@@ -76,6 +76,28 @@ This component validates the results of:
 *   `test_eval.py`: Unit test suite that checks the accuracy of the Jaccard, cosine, and BLEU-4 formulas against edge cases and the correct interception of regression alarms.
 *   `example.py`: Interactive code that simulates the evaluation of a base model, the export of its JSON baseline, the subsequent evaluation of an experimentally degraded model, and the breakdown of alerts in the console.
 
+## Using it as a package
+
+Since `0.1.0` the code lives in the `llm_eval_harness` package and the repository is
+pip-installable, so other projects can depend on it instead of copying files
+or editing `sys.path`:
+
+```bash
+pip install "llm-eval-harness @ git+https://github.com/juanmmm21/llm-eval-harness.git@v0.1.0"
+```
+
+```python
+from llm_eval_harness import LLMEvaluator, EvalHarnessSuite
+```
+
+The old top-level modules are kept as thin re-exports, so scripts that add
+this folder to `sys.path` keep working. This component imports no other
+ai-core component: they are combined in the `aicore` SDK of
+[ai-core-infra-hub](https://github.com/juanmmm21/ai-core-infra-hub), which
+passes collaborators (vector stores, encoders, tokenizers) in by injection.
+
+Development: `pip install -e ".[dev]"`, then `pytest` and `ruff check .`.
+
 ## Installation and Execution
 
 ### 1. Activate Local Environment and Install Dependencies

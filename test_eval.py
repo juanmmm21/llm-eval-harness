@@ -2,7 +2,7 @@ import unittest
 import os
 import shutil
 import tempfile
-from evaluator import LLMEvaluator, EvalHarnessSuite, DatasetEvaluationSummary
+from llm_eval_harness.evaluator import LLMEvaluator, EvalHarnessSuite, DatasetEvaluationSummary
 
 class TestLlmEvalHarness(unittest.TestCase):
 

@@ -15,3 +15,8 @@ env/
 # Checkpoint or evaluation reports
 reports/
 baselines/
+
+# Packaging
+build/
+dist/
+*.egg-info/
